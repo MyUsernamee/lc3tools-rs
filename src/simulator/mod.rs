@@ -53,10 +53,10 @@ impl Default for LC3Simulator {
     /// Default LC3Simulator. All registers, program counter, priority
     /// , and memory are all 0. Starts in user (unpriviledged) mode.
     /// empty state / PSR register, and no annotations.
-    /// Supervisor stack pointer is initialized to 0x3000, and user 
+    /// Supervisor stack pointer is initialized to 0x3000, and user
     /// stack pointer is initialized to 0xFEFF
     fn default() -> Self {
-        LC3Simulator {
+        let mut ret = LC3Simulator {
             registers: [0; 8],
             program_counter: 0,
             user_mode: true,
@@ -67,16 +67,18 @@ impl Default for LC3Simulator {
             supervisor_stack_pointer: 0x3000,
             user_stack_pointer: 0xFDFF,
             write_callbacks: HashMap::new(),
-        }    
+        };
+        ret.memory[0xFFFE] = 1 << 15;
+        ret
     }
 }
 
 impl LC3Simulator {
-    /// Creates a new default LC3Simulator 
+    /// Creates a new default LC3Simulator
     pub fn new() -> LC3Simulator {
-        Self::default() 
+        Self::default()
     }
-    
+
     /// Creates a new LC3Simulator with the default LC3 OS.
     pub fn with_os() -> LC3Simulator {
         let mut sim = LC3Simulator::new();
