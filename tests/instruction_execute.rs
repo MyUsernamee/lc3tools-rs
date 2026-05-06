@@ -7,9 +7,9 @@ fn decode(bytes: u16) -> Instruction {
 
 fn cond_code(value: u16) -> u16 {
     match (value as i32 >= 0, value) {
-        (false, 0) => {0b010},
-        (true, _) => {0b011},
-        _ => {0b100}
+        (false, 0) => 0b010,
+        (true, _) => 0b011,
+        _ => 0b100,
     }
 }
 
@@ -36,14 +36,17 @@ fn test_execute_add() {
     let reg_instr = decode(0b0001000001000010);
     let imm_instr = decode(0b0001000001100000 | imm);
 
-    let (reg_sim, _r0, r1,  r2) = make_test_sim(reg_instr);
+    let (reg_sim, _r0, r1, r2) = make_test_sim(reg_instr);
     let (imm_sim, _i0, i1, _i2) = make_test_sim(imm_instr);
 
     assert_eq!(reg_sim.get_program_counter(), 0x3001);
     assert_eq!(imm_sim.get_program_counter(), 0x3001);
 
     assert_eq!(reg_sim.get_register(0), r1.wrapping_add(r2));
-    assert_eq!(imm_sim.get_register(0), i1.wrapping_add(sign_extend(5, imm)));
+    assert_eq!(
+        imm_sim.get_register(0),
+        i1.wrapping_add(sign_extend(5, imm))
+    );
 
     let r = reg_sim.get_register(0) as i16;
     let i = imm_sim.get_register(0) as i16;
@@ -65,7 +68,7 @@ fn test_execute_and() {
     let reg_instr = decode(0b0101000001000010);
     let imm_instr = decode(0b0101000001100000 | imm);
 
-    let (reg_sim, _r0, r1,  r2) = make_test_sim(reg_instr);
+    let (reg_sim, _r0, r1, r2) = make_test_sim(reg_instr);
     let (imm_sim, _i0, i1, _i2) = make_test_sim(imm_instr);
 
     assert_eq!(reg_sim.get_program_counter(), 0x3001);
@@ -97,10 +100,18 @@ fn test_execute_br() {
     sim.set_register(0usize, 0);
     sim.set_register(1usize, random());
 
-    sim.execute(Instruction::ADD{dr:Register::R0, sr1:Register::R0, op: Operand::Register(Register::R1)});
+    sim.execute(Instruction::ADD {
+        dr: Register::R0,
+        sr1: Register::R0,
+        op: Operand::Register(Register::R1),
+    });
     sim.execute(instr);
 
-    let new_pc = if (sim.get_register(0) as i16) < 0 { 0x3002u16.wrapping_add(sign_extend(9, imm)) } else { 0x3002u16 } ;
+    let new_pc = if (sim.get_register(0) as i16) < 0 {
+        0x3002u16.wrapping_add(sign_extend(9, imm))
+    } else {
+        0x3002u16
+    };
 
     assert_eq!(sim.get_program_counter(), new_pc);
 }
@@ -109,7 +120,7 @@ fn test_execute_br() {
 // fn test_execute_jmp() {
 //     let instr = decode(0b1100000010000000u16);
 //
-//     assert_eq!(instr, Instruction::JMP { 
+//     assert_eq!(instr, Instruction::JMP {
 //         base_r: Register::R2
 //     });
 // }
@@ -155,7 +166,7 @@ fn test_execute_br() {
 // fn test_execute_not() {
 //     let instr = decode(0b1001001010111111);
 //
-//     assert_eq!(instr, Instruction::NOT { 
+//     assert_eq!(instr, Instruction::NOT {
 //         dr: Register::R1,
 //         sr: Register::R2,
 //     });
@@ -195,4 +206,3 @@ fn test_execute_br() {
 //
 //     assert_eq!(instr, Instruction::TRAP(0b10010010) )
 // }
-

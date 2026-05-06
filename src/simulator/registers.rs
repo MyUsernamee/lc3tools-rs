@@ -1,4 +1,3 @@
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Register {
     R0 = 0,
@@ -23,14 +22,13 @@ impl From<u16> for Register {
             5 => Register::R5,
             6 => Register::R6,
             7 => Register::R7,
-            _ => Register::R0
+            _ => Register::R0,
         }
     }
 }
 
 impl Into<usize> for Register {
     fn into(self) -> usize {
-        return self as usize
+        return self as usize;
     }
 }
-

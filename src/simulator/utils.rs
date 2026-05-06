@@ -10,4 +10,3 @@ pub fn sign_extend(bits: u16, value: u16) -> u16 {
     }
     value
 }
-
