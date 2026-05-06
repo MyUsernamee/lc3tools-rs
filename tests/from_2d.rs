@@ -1,5 +1,4 @@
 use lc3tools_rs::sign_extend;
-use rand::random;
 
 #[test]
 pub fn from_2d() {

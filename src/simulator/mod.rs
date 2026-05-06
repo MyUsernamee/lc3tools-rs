@@ -81,8 +81,6 @@ impl LC3Simulator {
         
         let mut orig = 0;
         let mut mem_ptr = 0;
-        let mut words: Vec<u16> = Vec::new();
-        let mut annotations: Vec<Option<String>> = Vec::new();
         while ptr < data.len() {
             let word = u16::from_ne_bytes(data[ptr..ptr+2].try_into().unwrap());
             ptr += 2;
@@ -161,8 +159,8 @@ impl LC3Simulator {
                 self.registers[dr as usize] = result;
             },
             Instruction::BR { n, z, p, offset } => {
-                let (N, Z, P) = self.state;
-                if (n & N) | (z & Z) | (p & P) {
+                let (s_n, s_z, s_p) = self.state;
+                if (n & s_n) | (z & s_z) | (p & s_p) {
                     self.program_counter = self.program_counter.wrapping_add(sign_extend(9, offset));
                 }
             },
