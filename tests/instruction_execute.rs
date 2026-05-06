@@ -1,22 +1,5 @@
-use lc3tools_rs::{Instruction, LC3Simulator, Operand, Register};
+use lc3tools_rs::{Instruction, LC3Simulator, Operand, Register, sign_extend};
 use rand::random;
-
-fn from_2c(bits: u16, value: u16) -> u16 {
-    let value_mask = (1 << bits - 1) - 1;
-    let sign_bit = value & (1 << bits - 1);
-    
-    let mut v = (value & value_mask) as u16;
-    if sign_bit == 1 {
-        v = !v + 1;
-    }
-
-    v
-}
-
-fn to_2c(bits: u16, value: u16) -> u16 {
-    let value_mask = (1 << bits) - 1;
-    value & value_mask
-}
 
 fn decode(bytes: u16) -> Instruction {
     Instruction::from(bytes)
@@ -60,7 +43,7 @@ fn test_execute_add() {
     assert_eq!(imm_sim.get_program_counter(), 0x3001);
 
     assert_eq!(reg_sim.get_register(0), r1.wrapping_add(r2));
-    assert_eq!(imm_sim.get_register(0), i1.wrapping_add(from_2c(5, imm)));
+    assert_eq!(imm_sim.get_register(0), i1.wrapping_add(sign_extend(5, imm)));
 
     let r = reg_sim.get_register(0) as i16;
     let i = imm_sim.get_register(0) as i16;
@@ -89,7 +72,7 @@ fn test_execute_and() {
     assert_eq!(imm_sim.get_program_counter(), 0x3001);
 
     assert_eq!(reg_sim.get_register(0), r1 & r2);
-    assert_eq!(imm_sim.get_register(0), i1 & from_2c(5, imm));
+    assert_eq!(imm_sim.get_register(0), i1 & sign_extend(5, imm));
 
     let r = reg_sim.get_register(0) as i16;
     let i = imm_sim.get_register(0) as i16;
@@ -108,7 +91,6 @@ fn test_execute_and() {
 fn test_execute_br() {
     let imm = make_imm_value(9);
     let instr = decode(0b0000100000000000 | imm);
-    dbg!(instr, imm);
 
     let mut sim = LC3Simulator::new();
     sim.jump_to(0x3000);
@@ -118,7 +100,7 @@ fn test_execute_br() {
     sim.execute(Instruction::ADD{dr:Register::R0, sr1:Register::R0, op: Operand::Register(Register::R1)});
     sim.execute(instr);
 
-    let new_pc = if (sim.get_register(0) as i16) < 0 { 0x3001u16.wrapping_add(from_2c(9, imm)) } else { 0x3001u16 } ;
+    let new_pc = if (sim.get_register(0) as i16) < 0 { 0x3002u16.wrapping_add(sign_extend(9, imm)) } else { 0x3002u16 } ;
 
     assert_eq!(sim.get_program_counter(), new_pc);
 }

@@ -1,4 +1,4 @@
-use std::{iter::zip, ops::Range, slice::Iter, str::Bytes};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, iter::zip, ops::Range, rc::Rc, slice::Iter, str::Bytes};
 
 // std::string lc3::utils::getMagicHeader(void) { return "\x1c\x30\x15\xc0\x01"; }
 // std::string lc3::utils::getVersionString(void) { return "\x01\x01"; }
@@ -6,21 +6,13 @@ use std::{iter::zip, ops::Range, slice::Iter, str::Bytes};
 const MAGIC_HEADER: &[u8; 5] = b"\x1c\x30\x15\xc0\x01";
 const VERSION_STRING: &[u8; 2] = b"\x01\x01";
 
-fn from_2c(bits: u16, value: u16) -> u16 {
-    let value_mask = (1 << bits - 1) - 1;
+pub fn sign_extend(bits: u16, value: u16) -> u16 {
+    let value = value & ((1 << bits) - 1);
     let sign_bit = value & (1 << bits - 1);
-    
-    let mut v = (value & value_mask) as u16;
-    if sign_bit == 1 {
-        v = !v + 1;
+    if sign_bit != 0 {
+        return (!(0b0u16) << bits) | value;
     }
-
-    v
-}
-
-fn to_2c(bits: u16, value: u16) -> u16 {
-    let value_mask = (1 << bits) - 1;
-    value & value_mask
+    value
 }
 
 fn get_bit(value: u16, bit: u16) -> bool {
@@ -96,30 +88,30 @@ impl From<u16> for Instruction {
             0b0001 => Instruction::ADD {
                 dr: Register::from((value >> 9) & 0b111),
                 sr1: Register::from((value >> 6) & 0b111),
-                op: if (value >> 5) & 0b1 == 1 { Operand::Immediate(from_2c(5, value)) } else {Operand::Register(Register::from(value & 0b111))}
+                op: if (value >> 5) & 0b1 == 1 { Operand::Immediate(sign_extend(5, value)) } else {Operand::Register(Register::from(value & 0b111))}
             },
             0b0101 => Instruction::AND {
                 dr: Register::from((value >> 9) & 0b111),
                 sr1: Register::from((value >> 6) & 0b111),
-                op: if (value >> 5) & 0b1 == 1 { Operand::Immediate(from_2c(5, value)) } else {Operand::Register(Register::from(value & 0b111))}
+                op: if (value >> 5) & 0b1 == 1 { Operand::Immediate(sign_extend(5, value )) } else {Operand::Register(Register::from(value & 0b111))}
             },
             0b0000 => Instruction::BR { 
                 n: (value >> 11) & 0b1 == 1, 
                 z: (value >> 10) & 0b1 == 1, 
                 p: (value >> 9) & 0b1 == 1, 
-                offset: from_2c(9, value)
+                offset: sign_extend(9, value)
             },
             0b1100 => Instruction::JMP { base_r: Register::from((value >> 6) & 0b111) }, 
-            0b0100 => Instruction::JSR { op: if ((value >> 11) & 0b1) == 1 { Operand::Immediate(from_2c(10, value)) } else {Operand::Register(Register::from((value >> 6) & 0b111))} },
-            0b0010 => Instruction::LD { dr: Register::from((value >> 9) & 0b111), offset: value & ((1 << 10) - 1) },
-            0b1010 => Instruction::LDI { dr: Register::from((value >> 9) & 0b111), offset: value & ((1 << 10) - 1) },
-            0b0110 => Instruction::LDR { dr: Register::from((value >> 9) & 0b111), base_r: Register::from((value >> 6) & 0b111), offset: value as u16 & ((1 << 6) - 1) },
-            0b1110 => Instruction::LEA { dr: Register::from((value >> 9) & 0b111), offset: value & ((1 << 10) - 1) },
+            0b0100 => Instruction::JSR { op: if ((value >> 11) & 0b1) == 1 { Operand::Immediate(sign_extend(10, value)) } else {Operand::Register(Register::from((value >> 6) & 0b111))} },
+            0b0010 => Instruction::LD { dr: Register::from((value >> 9) & 0b111), offset: sign_extend(9, value) },
+            0b1010 => Instruction::LDI { dr: Register::from((value >> 9) & 0b111), offset: sign_extend(9, value) },
+            0b0110 => Instruction::LDR { dr: Register::from((value >> 9) & 0b111), base_r: Register::from((value >> 6) & 0b111), offset: sign_extend(6, value) },
+            0b1110 => Instruction::LEA { dr: Register::from((value >> 9) & 0b111), offset: sign_extend(9, value) },
             0b1001 => Instruction::NOT { dr: Register::from((value >> 9) & 0b111), sr: Register::from((value >> 6) & 0b111) },
             0b1000 => Instruction::RTI,
-            0b0011 => Instruction::ST { sr: Register::from((value >> 9) & 0b111), offset: value & ((1 << 10) - 1) },
-            0b1011 => Instruction::STI { sr: Register::from((value >> 9) & 0b111), offset: value & ((1 << 10) - 1) },
-            0b0111 => Instruction::STR { sr: Register::from((value >> 9) & 0b111), base_r: Register::from((value >> 6) & 0b111), offset: value as u16 & ((1 << 6) - 1) },
+            0b0011 => Instruction::ST { sr: Register::from((value >> 9) & 0b111), offset: sign_extend(9, value) },
+            0b1011 => Instruction::STI { sr: Register::from((value >> 9) & 0b111), offset: sign_extend(9, value) },
+            0b0111 => Instruction::STR { sr: Register::from((value >> 9) & 0b111), base_r: Register::from((value >> 6) & 0b111), offset: sign_extend(6, value) },
             0b1111 => Instruction::TRAP(value as u8),
             _ => Instruction::NOOP
         }
@@ -136,6 +128,23 @@ pub struct LC3Simulator {
     annotations: Box<[Option<String>; 0xFFFF]>,
     supervisor_stack_pointer: u16,
     user_stack_pointer: u16,
+    write_callbacks: HashMap<u16, Box<dyn FnMut(u16) -> ()>>
+}
+
+impl Debug for LC3Simulator {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("LC3Simulator")
+            .field("registers", &self.registers)
+            .field("program_counter", &self.program_counter)
+            .field("user_mode", &self.user_mode)
+            .field("priority", &self.priority)
+            .field("state", &self.state)
+            .field("memory[pc]", &self.memory[self.program_counter as usize])
+            .field("annotations[pc]", &self.annotations[self.program_counter as usize])
+            .field("supervisor_stack_pointer", &self.supervisor_stack_pointer)
+            .field("user_stack_pointer", &self.user_stack_pointer)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -147,12 +156,13 @@ pub enum ObjLoadErr {
 
 impl LC3Simulator {
     pub fn new() -> LC3Simulator {
-        LC3Simulator { registers: [0; 8], program_counter: 0, user_mode: false, priority: 0, state: (false, false, false), memory: Box::new([0; 0xFFFF]), annotations: Box::new([const { None }; 0xFFFF]), supervisor_stack_pointer: 0x3000, user_stack_pointer: 0}
+        LC3Simulator { registers: [0; 8], program_counter: 0, user_mode: true, priority: 0, state: (false, false, false), memory: Box::new([0; 0xFFFF]), annotations: Box::new([const { None }; 0xFFFF]), supervisor_stack_pointer: 0x3000, user_stack_pointer: 0, write_callbacks: HashMap::new()}
     }
 
     pub fn with_os() -> LC3Simulator {
         let mut sim = LC3Simulator::new();
         sim.load_obj(include_bytes!("../lc3os/os.obj").to_vec(), true).expect("Failed to load OS.");
+        sim.load_obj(include_bytes!("../lc3os/trap_routines.obj").to_vec(), true).expect("Failed to load OS.");
         sim
     }
 
@@ -178,6 +188,7 @@ impl LC3Simulator {
         }
         
         let mut orig = 0;
+        let mut mem_ptr = 0;
         let mut words: Vec<u16> = Vec::new();
         let mut annotations: Vec<Option<String>> = Vec::new();
         while ptr < data.len() {
@@ -199,17 +210,13 @@ impl LC3Simulator {
             
             if is_orig {
                 orig = word;
+                mem_ptr = orig;
+                continue;
             }
 
-            words.push(word);
-            annotations.push(annotation);
-        }
-
-        for (idx, (word, annotation)) in zip(words, annotations).enumerate() {
-            let ptr = idx + orig as usize;
-            
-            self.memory[ptr] = word;
-            self.annotations[ptr] = annotation;
+            self.memory[mem_ptr as usize] = word;
+            self.annotations[mem_ptr as usize] = annotation.clone();
+            mem_ptr += 1;
         }
 
         if jump {
@@ -218,47 +225,14 @@ impl LC3Simulator {
 
         Ok(())
     }
-    
-    /// Step the cpu `steps` times, returns true amount of steps
-    /// (in case of halt, or break).
-    pub fn step(&mut self, steps: usize) -> usize {
-        for step in 0..steps {
-            let memory = self.fetch();
-            let instr = LC3Simulator::decode(memory);
-            let halt = self.execute(instr);
+    pub fn step (&mut self) -> bool {
+        let memory = self.fetch();
+        let instr = LC3Simulator::decode(memory);
+        self.execute(instr)
 
-            if halt {
-                return step;
-            }
-        }
-
-        steps
-    }
-
-    /// Run the cpu until a halt of breakpoint
-    pub fn run(&mut self) -> usize {
-        let mut steps = 0;
-
-        while {
-            let memory = self.fetch();
-            let instr = LC3Simulator::decode(memory);
-            self.execute(instr)
-        } { steps += 1; }
-
-        steps
-    }
-
-    /// Run the cpu until it is at the location speicifed or a halt.
-    pub fn run_to(&mut self, location: u16) -> usize {
-        let mut steps = 0;
-
-        while {
-            let memory = self.fetch();
-            let instr = LC3Simulator::decode(memory);
-            self.execute(instr) && self.program_counter != location
-        } { steps += 1; }
-
-        steps
+    } 
+    pub fn reset(&mut self) {
+        self.memory[0xFFFE] = 1<<15;
     }
 
     pub fn jump_to(&mut self, location: u16) {
@@ -274,12 +248,15 @@ impl LC3Simulator {
     }
 
     pub fn execute(&mut self, instr: Instruction) -> bool {
+        self.program_counter += 1;
+
         match instr {
             Instruction::ADD { dr, sr1, op } => {
-                let result = self.registers[sr1 as usize].wrapping_add(match op {
+                let other: u16 = match op {
                     Operand::Immediate(value) => value,
                     Operand::Register(reg) => self.registers[reg as usize]
-                });
+                };
+                let result = self.registers[sr1 as usize].wrapping_add(other);
                 self.update_condition_code(result);
                 self.registers[dr as usize] = result;
             },
@@ -294,7 +271,7 @@ impl LC3Simulator {
             Instruction::BR { n, z, p, offset } => {
                 let (N, Z, P) = self.state;
                 if (n & N) | (z & Z) | (p & P) {
-                    self.program_counter += from_2c(9, offset);
+                    self.program_counter = self.program_counter.wrapping_add(sign_extend(9, offset));
                 }
             },
             Instruction::JMP { base_r } => {
@@ -303,14 +280,14 @@ impl LC3Simulator {
             Instruction::JSR { op } => {
                 self.program_counter = match op {
                     Operand::Register(reg) => self.registers[reg as usize],
-                    Operand::Immediate(offset) => from_2c(11, offset)
+                    Operand::Immediate(offset) => sign_extend(11, offset)
                 }
             },
             i @ (Instruction::LD { dr, offset, .. } | Instruction::LDI { dr, offset, .. } | Instruction::LDR { dr, offset, .. }) => {
                 let addr = match i {
-                    Instruction::LD {..} => self.program_counter + from_2c(9, offset),
-                    Instruction::LDI {..} => self.memory[(self.program_counter + from_2c(9, offset)) as usize],
-                    Instruction::LDR {base_r, ..} => self.registers[base_r as usize] + from_2c(6, offset),
+                    Instruction::LD {..} => self.program_counter + sign_extend(9, offset),
+                    Instruction::LDI {..} => self.memory[(self.program_counter + sign_extend(9, offset)) as usize],
+                    Instruction::LDR {base_r, ..} => self.registers[base_r as usize] + sign_extend(6, offset),
                     _ => 0
                 };
                 let result = self.memory[addr as usize];
@@ -318,7 +295,7 @@ impl LC3Simulator {
                 self.registers[dr as usize] = result;
             },
             Instruction::LEA { dr, offset } => {
-                let result = self.program_counter + from_2c(9, offset);
+                let result = self.program_counter.wrapping_add(sign_extend(9, offset));
                 self.registers[dr as usize] = result;
             },
             Instruction::NOT { dr, sr } => {
@@ -328,16 +305,15 @@ impl LC3Simulator {
             },
             Instruction::RTI => {
                 if self.user_mode {
+                    dbg!(&self, format!("{:b}", self.read(self.program_counter)));
                     todo!()
                 }
                 else {
-                    self.program_counter = self.registers[6];
+                    self.program_counter = self.read(self.registers[6]);
                     self.registers[6] += 1;
                     let temp = self.memory[self.registers[6] as usize];
                     self.registers[6] += 1;
-                    self.user_mode = get_bit(temp, 15);
-                    self.priority = temp & 0b1111111000;
-                    self.state = (get_bit(temp, 2), get_bit(temp, 1), get_bit(temp, 0));
+                    self.set_psr(temp);                    
                     if self.user_mode {
                         self.supervisor_stack_pointer = self.registers[6];
                         self.registers[6] = self.user_stack_pointer;
@@ -346,35 +322,36 @@ impl LC3Simulator {
             },
             i @ (Instruction::ST { sr, offset } | Instruction::STI { sr, offset } |  Instruction::STR { sr, offset, .. }) => {
                 let location = match i {
-                    Instruction::ST { .. } => self.program_counter + from_2c(9, offset),
-                    Instruction::STI { .. } => self.memory[(self.program_counter + from_2c(9, offset)) as usize],
-                    Instruction::STR { base_r, .. } => self.registers[base_r as usize] + from_2c(6, offset),
+                    Instruction::ST { .. } => self.program_counter.wrapping_add(sign_extend(9, offset)),
+                    Instruction::STI { .. } => self.memory[(self.program_counter.wrapping_add(sign_extend(9, offset))) as usize],
+                    Instruction::STR { base_r, .. } => self.registers[base_r as usize].wrapping_add(sign_extend(6, offset)),
                     _ => 0
                 };
-                self.memory[location as usize] = self.registers[sr as usize]; 
+
+                if self.user_mode && location < 0x3000 {
+                    self.interrupt(0x02);
+                }
+                else {
+                    self.write(self.registers[sr as usize], location); 
+                }
             },
             Instruction::TRAP(trap_vec) => {
-                let state = ((self.state.2 as u16) << 2) | ((self.state.1 as u16) << 1) | (self.state.0 as u16);
-                let psr = ((self.user_mode as u16) << 15) | self.priority << 3 | state;
+                let psr = self.get_psr();
                 if self.user_mode {
                     self.user_stack_pointer = self.registers[6];
                     self.registers[6] = self.supervisor_stack_pointer;
                 }
-                self.memory[self.registers[6] as usize] = psr;
-                self.registers[6] += 1;
-                self.memory[self.registers[6] as usize] = self.program_counter;
-                self.registers[6] += 1;
+                self.user_mode = false;
+                self.registers[6] -= 1;
+                self.write(psr, self.registers[6]);
+                self.registers[6] -= 1;
+                self.write(self.program_counter, self.registers[6]);
                 self.program_counter = self.memory[trap_vec as usize];
             },
             Instruction::NOOP => {},
         }
 
-        match instr {
-            Instruction::BR {..} | Instruction::RTI | Instruction::TRAP(_) | Instruction::JSR { op : _ } |
-                Instruction::JMP { base_r: _ } => {},
-            _ => {self.program_counter += 1}
-        }
-
+    
         return (self.memory[0xFFFE] >> 15) == 1;
     }
 
@@ -387,6 +364,29 @@ impl LC3Simulator {
         };
     }
 
+    pub fn interrupt(&mut self, vector: u16) {
+        let temp = self.get_psr();
+        self.user_mode = false;
+        if get_bit(temp, 15) {
+            self.user_stack_pointer = self.registers[6];
+            self.registers[6] = self.supervisor_stack_pointer;
+        }
+        self.registers[6] -= 1;
+        self.write(temp, self.registers[6]);
+        self.registers[6] -= 1;
+        self.write(self.program_counter, self.registers[6]);
+        self.program_counter = self.memory[(vector + 0x100) as usize];
+    }
+
+    pub fn get_psr(&self) -> u16 {
+        let state = ((self.state.2 as u16) << 2) | ((self.state.1 as u16) << 1) | (self.state.0 as u16);
+        ((self.user_mode as u16) << 15) | self.priority << 3 | state
+    }
+    pub fn set_psr(&mut self, psr: u16) {
+        self.user_mode = get_bit(psr, 15);
+        self.priority = psr & 0b1111111000;
+        self.state = (get_bit(psr, 2), get_bit(psr, 1), get_bit(psr, 0));
+    }
     pub fn get_register(&self, idx: usize) -> u16 {
         self.registers[idx]
     }
@@ -397,11 +397,23 @@ impl LC3Simulator {
         self.state
     }
 
-    pub fn get_memory_location(&self, loc: u16) -> u16 {
-        self.memory[loc as usize]
-    }
     pub fn get_memory(&self) -> &Box<[u16; 0xFFFF]> {
         return &self.memory
+    }
+
+    pub fn read(&self, loc: u16) -> u16 {
+        return self.memory[loc as usize]
+    }
+
+    pub fn write(&mut self, value: u16, location: u16) {
+        self.memory[location as usize] = value;
+        if let Some(callback) = self.write_callbacks.get_mut(&location) {
+            callback(value);
+        }
+    }
+
+    pub fn add_write_callback<T: FnMut(u16) -> () + 'static>(&mut self, loc: u16, callback: T) {
+        self.write_callbacks.insert(loc, Box::new(callback));
     }
 
     pub fn get_annotation_location(&self, loc: u16) -> &Option<String> {
@@ -414,4 +426,5 @@ impl LC3Simulator {
     pub fn set_register<T: Into<usize>>(&mut self, reg: T, value: u16) {
         self.registers[reg.into()] = value;
     }
+
 }
