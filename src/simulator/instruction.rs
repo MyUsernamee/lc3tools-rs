@@ -1,12 +1,14 @@
 use super::registers::*;
 use super::utils::sign_extend;
 
+/// Represent an operand for all operate instructions.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Operand {
     Immediate(u16),
     Register(Register),
 }
 
+/// Represents an instruction :).
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Instruction {
     ADD {
@@ -70,6 +72,7 @@ pub enum Instruction {
     NOOP,
 }
 
+/// Takes two bytes (u16) and decodes it into an Instruction.
 impl From<u16> for Instruction {
     fn from(value: u16) -> Self {
         // Get first 4 bits.

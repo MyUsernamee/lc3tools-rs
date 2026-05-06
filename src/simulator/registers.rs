@@ -1,3 +1,5 @@
+
+/// Simple enum to represent all general purpose registers.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Register {
     R0 = 0,
