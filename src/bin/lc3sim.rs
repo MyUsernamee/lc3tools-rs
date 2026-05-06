@@ -17,5 +17,5 @@ fn main() {
     let mut sim = LC3Simulator::new();
     sim.load_obj(file_data, true).expect("Unable to read obj file.");
 
-    println!("{:?}", sim.get_annotation()[0x3000..0x30F0].to_vec());
+    println!("{:?}", sim.get_annotations()[0x3000..0x30F0].to_vec());
 }

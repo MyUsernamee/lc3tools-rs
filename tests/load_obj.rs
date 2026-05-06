@@ -1,7 +1,6 @@
 use std::fs::read;
 
-use lc3tools_rs::LC3Simulator;
-
+use lc3tools_rs::{LC3Simulator};
 
 #[test]
 fn test_obj_load() {
@@ -12,4 +11,9 @@ fn test_obj_load() {
 
     sim.load_obj(data, true).expect("Error loading test .obj");
     assert_eq!(sim.get_program_counter(), 0x3000);
+}
+
+#[test]
+fn test_os() {
+    let mut sim = LC3Simulator::with_os();
 }
