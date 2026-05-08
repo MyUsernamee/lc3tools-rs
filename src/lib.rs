@@ -1,5 +1,5 @@
-pub mod simulator;
 pub mod debugger;
+pub mod simulator;
 
-pub use simulator::*;
 pub use debugger::*;
+pub use simulator::*;

@@ -12,13 +12,13 @@ pub struct Cli {
     /// Don't open repl even on execeptions.
     #[arg(long)]
     no_repl: bool,
-    /// Unless no-repl is provided, 
+    /// Unless no-repl is provided,
     /// add a breakpoint at the given address, open a repl when hit,
     /// otherwise does nothing.
     #[arg(short, long)]
-    breakpoint: Vec<u16>, 
+    breakpoint: Vec<u16>,
     #[arg(long)]
-    verbose: bool
+    verbose: bool,
 }
 
 fn main() {
@@ -47,18 +47,16 @@ fn main() {
 
     let mut debugger = Debugger::default();
     debugger.run().expect("Error rendering debugger.");
-
 }
 
 fn run_no_repl(mut sim: LC3Simulator) {
     let out_callback = |sim: &mut LC3Simulator, v: u16| {
         print!("{}", String::from_utf8([v as u8].to_vec()).unwrap());
-        sim.write(1u16<<15, 0xFE04); // Ready for next character.
+        sim.write(1u16 << 15, 0xFE04); // Ready for next character.
     };
 
-    sim.write(1u16<<15, 0xFE04); // Ready for next character.
+    sim.write(1u16 << 15, 0xFE04); // Ready for next character.
     sim.add_write_callback(0xFE06, out_callback);
 
-    while sim.step() {
-    }
+    while sim.step() {}
 }

@@ -352,13 +352,20 @@ impl LC3Simulator {
     pub fn write(&mut self, value: u16, location: u16) {
         self.memory[location as usize] = value;
         let callback = self.write_callbacks.get(&location);
-        if callback.is_none() {return;}
+        if callback.is_none() {
+            return;
+        }
         let callback = callback.unwrap().clone();
         callback.borrow_mut()(self, value);
     }
 
-    pub fn add_write_callback<T: FnMut(&mut LC3Simulator, u16) -> () + 'static>(&mut self, loc: u16, callback: T) {
-        self.write_callbacks.insert(loc, Rc::new(RefCell::new(callback)));
+    pub fn add_write_callback<T: FnMut(&mut LC3Simulator, u16) -> () + 'static>(
+        &mut self,
+        loc: u16,
+        callback: T,
+    ) {
+        self.write_callbacks
+            .insert(loc, Rc::new(RefCell::new(callback)));
     }
 
     pub fn get_annotation_location(&self, loc: u16) -> &Option<String> {
