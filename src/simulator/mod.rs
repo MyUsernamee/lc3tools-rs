@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
 
 pub mod consts;
 pub mod instruction;
@@ -27,7 +27,7 @@ pub struct LC3Simulator {
     annotations: Box<[Option<String>; 0xFFFF]>,
     supervisor_stack_pointer: u16,
     user_stack_pointer: u16,
-    write_callbacks: HashMap<u16, Box<dyn FnMut(u16) -> ()>>,
+    write_callbacks: HashMap<u16, Rc<RefCell<dyn FnMut(&mut LC3Simulator, u16) -> ()>>>,
 }
 
 impl Debug for LC3Simulator {
@@ -351,13 +351,14 @@ impl LC3Simulator {
 
     pub fn write(&mut self, value: u16, location: u16) {
         self.memory[location as usize] = value;
-        if let Some(callback) = self.write_callbacks.get_mut(&location) {
-            callback(value);
-        }
+        let callback = self.write_callbacks.get(&location);
+        if callback.is_none() {return;}
+        let callback = callback.unwrap().clone();
+        callback.borrow_mut()(self, value);
     }
 
-    pub fn add_write_callback<T: FnMut(u16) -> () + 'static>(&mut self, loc: u16, callback: T) {
-        self.write_callbacks.insert(loc, Box::new(callback));
+    pub fn add_write_callback<T: FnMut(&mut LC3Simulator, u16) -> () + 'static>(&mut self, loc: u16, callback: T) {
+        self.write_callbacks.insert(loc, Rc::new(RefCell::new(callback)));
     }
 
     pub fn get_annotation_location(&self, loc: u16) -> &Option<String> {

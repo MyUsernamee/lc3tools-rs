@@ -14,7 +14,7 @@ fn test_hello_world() {
     .expect("Failed to load test file.");
 
     let value = test_output.clone();
-    let cb = move |v| -> () {
+    let cb = move |_: &mut LC3Simulator, v| -> () {
         *(value.clone()).borrow_mut() += &String::from_utf8([v as u8].to_vec()).unwrap();
     };
 

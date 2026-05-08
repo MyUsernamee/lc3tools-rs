@@ -1,5 +1,5 @@
 use clap::Parser;
-use lc3tools_rs::LC3Simulator;
+use lc3tools_rs::{Debugger, LC3Simulator};
 use log::warn;
 use simple_logger::SimpleLogger;
 use std::{fs::read, path::PathBuf};
@@ -44,16 +44,21 @@ fn main() {
         run_no_repl(sim);
         return;
     }
+
+    let mut debugger = Debugger::default();
+    debugger.run().expect("Error rendering debugger.");
+
 }
 
 fn run_no_repl(mut sim: LC3Simulator) {
-    let out_callback = |v: u16| {
+    let out_callback = |sim: &mut LC3Simulator, v: u16| {
         print!("{}", String::from_utf8([v as u8].to_vec()).unwrap());
+        sim.write(1u16<<15, 0xFE04); // Ready for next character.
     };
 
+    sim.write(1u16<<15, 0xFE04); // Ready for next character.
     sim.add_write_callback(0xFE06, out_callback);
 
     while sim.step() {
-        sim.write(1 << 15, 0xFE04);
     }
 }
