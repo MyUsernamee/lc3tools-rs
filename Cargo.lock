@@ -709,6 +709,7 @@ dependencies = [
  "crossterm",
  "keybinds",
  "log",
+ "num-traits",
  "nvim-oxi",
  "rand 0.10.1",
  "ratatui",

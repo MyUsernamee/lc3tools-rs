@@ -1,4 +1,7 @@
-use std::ops::{AddAssign, SubAssign};
+use std::cell::RefCell;
+use std::ops::{AddAssign, Range, SubAssign};
+use std::process::exit;
+use std::rc::Rc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use keybinds::Keybinds;
@@ -7,7 +10,6 @@ use ratatui::text::ToSpan;
 use ratatui::widgets::{Block, BorderType, Borders, Row, Table, TableState};
 use ratatui::{DefaultTerminal, Frame, text::Line};
 use serde::Deserialize;
-
 use crate::LC3Simulator;
 
 pub mod nvim;
@@ -60,15 +62,30 @@ pub enum Action {
     Down,
     Left,
     Right,
+    PageUp,
+    PageDown,
     CycleWindow,
     ReverseCycleWindow,
     Quit,
+    CommandMode,
+    Home,
+    Step,
+    Run,
+    ToggleBreakpoint,
+    Top,
+    Bottom,
+}
+
+pub enum KeyPress {
+    Action(Action),
+    Code(KeyCode)
 }
 
 #[derive(Clone, Copy)]
 pub enum Mode {
     Insert,
     Normal,
+    Command
 }
 
 #[derive(Deserialize)]
@@ -76,12 +93,20 @@ pub struct Config {
     pub keybinds: Keybinds<Action>,
 }
 
+pub struct MemTableState {
+    table_state: TableState,
+    address: u16
+}
+
 pub struct Debugger {
     sim: LC3Simulator,
     current_window: WindowSelection,
     config: Config,
     mode: Mode,
-    memory_table_state: TableState
+    memory_table_state: MemTableState,
+    output: Rc<RefCell<String>>,
+    command_buffer: String,
+    display_textline: Option<String>
 }
 
 const DEFAULT_KEYBINDS: &str = r#"
@@ -90,11 +115,19 @@ const DEFAULT_KEYBINDS: &str = r#"
 "j" = "Down"
 "k" = "Up"
 "h" = "Left"
+"'" = "Home"
+"g" = "Top"
+"G" = "Bottom"
 
 "Tab" = "CycleWindow"
 "Shift+Tab" = "ReverseCycleWindow"
 
 "Escape" = "Quit"
+
+":" = "CommandMode"
+"s" = "Step"
+"r" = "Run"
+"b" = "ToggleBreakpoint"
 "#;
 
 impl Default for Debugger {
@@ -105,12 +138,31 @@ impl Default for Debugger {
             current_window: WindowSelection::Output,
             config,
             mode: Mode::Normal,
-            memory_table_state: TableState::default()
+            memory_table_state: MemTableState { table_state: TableState::new(), address: 0 },
+            output: Rc::default(),
+            command_buffer: String::default(),
+            display_textline: None,
         }
     }
 }
 
 impl Debugger {
+    pub fn with_sim(sim: LC3Simulator) -> Self {
+        let mut new = Self {
+            sim,
+            ..Default::default()
+        };
+        let output_rc = new.output.clone();
+
+        new.sim.write(0xFE04, 1u16<<15); // Tell the os we are ready for another char.
+        new.sim.add_write_callback(0xFE06, move |sim, value| {
+            *output_rc.borrow_mut() += String::from_utf8(vec![value as u8]).unwrap_or("".to_string()).as_str();
+            sim.write(0xFE04, 1<<15); // Tell the os we are ready for another char.
+            println!("OUTPUT WRITE");
+        });
+
+        new
+    }
     pub fn get_sim(&self) -> &LC3Simulator {
         &self.sim
     }
@@ -146,6 +198,19 @@ impl Debugger {
         if let Some(action) = self.config.keybinds.dispatch(&key_event) && key_event.is_press() {
             match (*action, self.mode) {
                 (Action::Quit, Mode::Insert) => {self.mode = Mode::Normal;},
+                (Action::Quit, Mode::Normal) => {return true;}
+                (Action::Step, Mode::Normal) => { self.sim.step(); }
+                (Action::Run, Mode::Normal) => { 
+                    while self.sim.step() {
+
+                    }
+                }
+                (Action::Home, Mode::Normal) => {
+                    self.memory_table_state.address = self.sim.get_program_counter();
+                }
+                (Action::CommandMode, Mode::Normal) => {
+                    self.mode = Mode::Command;
+                }
                 (Action::CycleWindow, Mode::Normal) => {
                     self.current_window += 1;
                 }
@@ -154,13 +219,21 @@ impl Debugger {
                 }
                 (action, mode) => {
                     match self.current_window {
-                        WindowSelection::Memory => self.handle_memory_input(action, mode),
-                        WindowSelection::Output => self.handle_output_input(action, mode),
-                        WindowSelection::State => self.handle_state_input(action, mode),
+                        WindowSelection::Memory => self.handle_memory_input(KeyPress::Action(action), mode),
+                        WindowSelection::Output => self.handle_output_input(KeyPress::Action(action), mode),
+                        WindowSelection::State => self.handle_state_input(KeyPress::Action(action), mode),
                     } 
                 }
                 _ => {}
             }
+        }
+
+        if key_event.is_press() {
+            match self.current_window {
+                WindowSelection::Memory => self.handle_memory_input(KeyPress::Code(key_event.code), self.mode),
+                WindowSelection::Output => self.handle_output_input(KeyPress::Code(key_event.code), self.mode),
+                WindowSelection::State => self.handle_state_input(KeyPress::Code(key_event.code), self.mode),
+            }                                                         
         }
 
         false
@@ -179,6 +252,8 @@ impl Debugger {
         self.render_memory(frame, memory_area);
         self.render_state(frame, state_area);
         self.render_output(frame, output_area);
+
+        self.render_display_textline(frame);
     }
 
     fn draw_subwindow(&'_ self, title: String, selected: bool) -> Block<'_> {
@@ -196,6 +271,7 @@ impl Debugger {
             "Output".to_string(),
             self.current_window == WindowSelection::Output,
         );
+
         frame.render_widget(block, area);
     }
 
@@ -205,11 +281,36 @@ impl Debugger {
             self.current_window == WindowSelection::Memory,
         );
 
-        let mem_table = Table::default()
-            .header(Row::new(vec!["Address", "Value", "Annotation"]));
+        let num_visible_rows = block.inner(area).height;
+        let selected_index: Option<usize>;
 
+        let rows = {
+            let start_address: u16 = self.memory_table_state.address;
+            let addresses = (0..num_visible_rows).map(move |x| {
+                ((start_address as i32 - num_visible_rows as i32 / 2) + x as i32).rem_euclid(0x10000)
+            });
+            selected_index = addresses.clone().position(|x| x as u16 == self.sim.get_program_counter());
+            let values = addresses.map(|address| {
+                (address, self.sim.get_memory()[address as usize], self.sim.get_annotations()[address as usize].clone())
+            });
+            values.map(|v| { 
+                Row::new(vec![format!("0x{:04X}", v.0), format!("0x{:04X}", v.1), v.2.unwrap_or("".to_string())]) 
+            })
+        };
+
+        self.memory_table_state.table_state.select(selected_index);
+
+        let mem_table = Table::default()
+            .header(Row::new(vec!["Address", "Value", "Annotation"]))
+            .highlight_symbol(">>")
+            .rows(rows);
+
+        let block = self.draw_subwindow(
+            "Memory".to_string(),
+            self.current_window == WindowSelection::Memory,
+        );
         frame.render_widget(&block, area);
-        frame.render_stateful_widget(mem_table, block.inner(area), &mut self.memory_table_state);
+        frame.render_stateful_widget(mem_table, block.inner(area), &mut self.memory_table_state.table_state);
     }
 
     fn render_state(&self, frame: &mut Frame, area: Rect) {
@@ -220,15 +321,51 @@ impl Debugger {
         frame.render_widget(block, area);
     }
 
-    fn handle_memory_input(&mut self, action: Action, mode: Mode) {
+    fn handle_memory_input(&mut self, press: KeyPress, mode: Mode) {
+        match (press, mode) {
+            (KeyPress::Action(Action::Up), Mode::Normal) => {
+                self.memory_table_state.address = self.memory_table_state.address.wrapping_sub(1);
+            },
+            (KeyPress::Action(Action::Down), Mode::Normal) => {
+                self.memory_table_state.address = self.memory_table_state.address.wrapping_add(1);
+            },
+            (KeyPress::Action(Action::Top), Mode::Normal) => {
+                self.memory_table_state.address = 0;
+            },
+            (KeyPress::Code(KeyCode::Enter), Mode::Command) => {
+                if self.command_buffer == "".to_string() { 
+                    self.display_textline = None;
+                    return; 
+                }
+
+                let requested_address = u16::from_str_radix(self.command_buffer.as_str(), 16);
+
+                if let Ok(address) = requested_address {
+                    self.memory_table_state.address = address;
+                    self.display_textline = None
+                }
+                else {
+                    self.display_textline = Some(format!("Invalid address {}.", self.command_buffer).to_string());
+                }
+
+                self.command_buffer = "".to_string();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_output_input(&mut self, action: KeyPress, mode: Mode) {
         todo!()
     }
 
-    fn handle_output_input(&mut self, action: Action, mode: Mode) {
+    fn handle_state_input(&mut self, action: KeyPress, mode: Mode) {
         todo!()
     }
 
-    fn handle_state_input(&mut self, action: Action, mode: Mode) {
-        todo!()
+    fn render_display_textline(&self, frame: &mut Frame<'_>) {
+        if self.display_textline.is_none() { return; }
+        let area = frame.area();
+        let disp_layout = Layout::, flex)
+        frame.render_widget(widget, area);
     }
 }

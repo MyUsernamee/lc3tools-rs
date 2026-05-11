@@ -23,8 +23,8 @@ pub struct LC3Simulator {
     user_mode: bool,
     priority: u16,
     state: (bool, bool, bool),
-    memory: Box<[u16; 0xFFFF]>,
-    annotations: Box<[Option<String>; 0xFFFF]>,
+    memory: Box<[u16; 0x10000]>,
+    annotations: Box<[Option<String>; 0x10000]>,
     supervisor_stack_pointer: u16,
     user_stack_pointer: u16,
     write_callbacks: HashMap<u16, Rc<RefCell<dyn FnMut(&mut LC3Simulator, u16) -> ()>>>,
@@ -62,8 +62,8 @@ impl Default for LC3Simulator {
             user_mode: true,
             priority: 0,
             state: (false, false, false),
-            memory: Box::new([0; 0xFFFF]),
-            annotations: Box::new([const { None }; 0xFFFF]),
+            memory: Box::new([0; 0x10000]),
+            annotations: Box::new([const { None }; 0x10000]),
             supervisor_stack_pointer: 0x3000,
             user_stack_pointer: 0xFDFF,
             write_callbacks: HashMap::new(),
@@ -341,7 +341,7 @@ impl LC3Simulator {
         self.state
     }
 
-    pub fn get_memory(&self) -> &Box<[u16; 0xFFFF]> {
+    pub fn get_memory(&self) -> &Box<[u16; 0x10000]> {
         return &self.memory;
     }
 
@@ -371,7 +371,7 @@ impl LC3Simulator {
     pub fn get_annotation_location(&self, loc: u16) -> &Option<String> {
         &self.annotations[loc as usize]
     }
-    pub fn get_annotations(&self) -> &Box<[Option<String>; 0xFFFF]> {
+    pub fn get_annotations(&self) -> &Box<[Option<String>; 0x10000]> {
         return &self.annotations;
     }
 

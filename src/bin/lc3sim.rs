@@ -45,7 +45,7 @@ fn main() {
         return;
     }
 
-    let mut debugger = Debugger::default();
+    let mut debugger = Debugger::with_sim(sim);
     debugger.run().expect("Error rendering debugger.");
 }
 
