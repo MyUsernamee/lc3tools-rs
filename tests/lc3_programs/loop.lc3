@@ -1,0 +1,12 @@
+.ORIG x3000
+
+LEA R0, char
+loop
+ADD R1, R1, #1
+ST R1, char
+PUTS
+BR loop
+
+char .STRINGZ "a"
+
+.END

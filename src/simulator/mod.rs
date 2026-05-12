@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc, sync::{Arc, Mutex}};
 
 pub mod consts;
 pub mod instruction;
@@ -27,7 +27,7 @@ pub struct LC3Simulator {
     annotations: Box<[Option<String>; 0x10000]>,
     supervisor_stack_pointer: u16,
     user_stack_pointer: u16,
-    write_callbacks: HashMap<u16, Rc<RefCell<dyn FnMut(&mut LC3Simulator, u16) -> ()>>>,
+    write_callbacks: HashMap<u16, Arc<Mutex<dyn Fn(&mut LC3Simulator, u16) + Sync + Send>>>,
 }
 
 impl Debug for LC3Simulator {
@@ -200,7 +200,7 @@ impl LC3Simulator {
             }
             Instruction::BR { n, z, p, offset } => {
                 let (s_n, s_z, s_p) = self.state;
-                if (n & s_n) | (z & s_z) | (p & s_p) {
+                if (n & s_n) | (z & s_z) | (p & s_p) | (n & z & p) {
                     self.program_counter =
                         self.program_counter.wrapping_add(sign_extend(9, offset));
                 }
@@ -243,7 +243,7 @@ impl LC3Simulator {
             Instruction::RTI => {
                 if self.user_mode {
                     dbg!(&self, format!("{:b}", self.read(self.program_counter)));
-                    todo!()
+                    todo!();
                 } else {
                     self.program_counter = self.read(self.registers[6]);
                     self.registers[6] += 1;
@@ -356,16 +356,16 @@ impl LC3Simulator {
             return;
         }
         let callback = callback.unwrap().clone();
-        callback.borrow_mut()(self, value);
+        callback.lock().unwrap()(self, value);
     }
 
-    pub fn add_write_callback<T: FnMut(&mut LC3Simulator, u16) -> () + 'static>(
+    pub fn add_write_callback<T: Fn(&mut LC3Simulator, u16) + 'static + Sync + Send>(
         &mut self,
         loc: u16,
         callback: T,
     ) {
         self.write_callbacks
-            .insert(loc, Rc::new(RefCell::new(callback)));
+            .insert(loc, Arc::new(Mutex::new(callback)));
     }
 
     pub fn get_annotation_location(&self, loc: u16) -> &Option<String> {
