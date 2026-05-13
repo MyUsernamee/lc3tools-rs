@@ -1,4 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, rc::Rc, sync::{Arc, Mutex}};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt::Debug,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 pub mod consts;
 pub mod instruction;
@@ -28,6 +34,25 @@ pub struct LC3Simulator {
     supervisor_stack_pointer: u16,
     user_stack_pointer: u16,
     write_callbacks: HashMap<u16, Arc<Mutex<dyn Fn(&mut LC3Simulator, u16) + Sync + Send>>>,
+    reset_state: Option<Box<LC3Simulator>>,
+}
+
+impl Clone for LC3Simulator {
+    fn clone(&self) -> Self {
+        Self {
+            registers: self.registers.clone(),
+            program_counter: self.program_counter.clone(),
+            user_mode: self.user_mode.clone(),
+            priority: self.priority.clone(),
+            state: self.state.clone(),
+            memory: self.memory.clone(),
+            annotations: self.annotations.clone(),
+            supervisor_stack_pointer: self.supervisor_stack_pointer.clone(),
+            user_stack_pointer: self.user_stack_pointer.clone(),
+            write_callbacks: self.write_callbacks.clone(),
+            reset_state: None,
+        }
+    }
 }
 
 impl Debug for LC3Simulator {
@@ -67,6 +92,7 @@ impl Default for LC3Simulator {
             supervisor_stack_pointer: 0x3000,
             user_stack_pointer: 0xFDFF,
             write_callbacks: HashMap::new(),
+            reset_state: None,
         };
         ret.memory[0xFFFE] = 1 << 15;
         ret
@@ -87,6 +113,26 @@ impl LC3Simulator {
         sim
     }
 
+    pub fn reset(&mut self) {
+        if let Some(state) = self.reset_state.take() {
+            {
+                *self = *state;
+            }
+            self.set_reset_state();
+        }
+    }
+    pub fn set_reset_state(&mut self) {
+        let mut reset_state = match self.reset_state.take() {
+            Some(reset_state) => reset_state,
+            None => {
+                let reset_state = Box::new(LC3Simulator::default());
+                reset_state
+            }
+        };
+        self.clone_into(&mut reset_state);
+        self.reset_state = Some(reset_state);
+
+    }
     /// Loads obj from vector of bytes.
     /// If jump is true, jump to the origin specified in the obj
     pub fn load_obj(&mut self, data: Vec<u8>, jump: bool) -> Result<(), ObjLoadErr> {
@@ -151,6 +197,7 @@ impl LC3Simulator {
 
         if jump {
             self.jump_to(orig);
+            self.set_reset_state();
         }
 
         Ok(())
@@ -159,9 +206,6 @@ impl LC3Simulator {
         let memory = self.fetch();
         let instr = LC3Simulator::decode(memory);
         self.execute(instr)
-    }
-    pub fn reset(&mut self) {
-        self.memory[0xFFFE] = 1 << 15;
     }
 
     pub fn jump_to(&mut self, location: u16) {

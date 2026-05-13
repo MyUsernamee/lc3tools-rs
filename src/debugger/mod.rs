@@ -1,14 +1,14 @@
 use std::ops::{AddAssign, SubAssign};
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread::{JoinHandle};
+use std::thread::JoinHandle;
 
+use crate::LC3Simulator;
 use crossterm::event::{KeyCode, KeyEvent};
 use keybinds::Keybinds;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Clear, Row, Table, TableState};
 use ratatui::{DefaultTerminal, Frame, text::Line};
 use serde::Deserialize;
-use crate::{LC3Simulator};
 pub mod nvim;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -24,7 +24,7 @@ impl Into<usize> for WindowSelection {
             WindowSelection::Memory => 0,
             WindowSelection::Output => 1,
             WindowSelection::State => 2,
-        } 
+        }
     }
 }
 impl From<usize> for WindowSelection {
@@ -33,7 +33,7 @@ impl From<usize> for WindowSelection {
             0 => WindowSelection::Memory,
             1 => WindowSelection::Output,
             2 => WindowSelection::State,
-            _ => WindowSelection::Memory
+            _ => WindowSelection::Memory,
         }
     }
 }
@@ -77,14 +77,14 @@ pub enum Action {
 
 pub enum KeyPress {
     Action(Action),
-    Code(KeyCode)
+    Code(KeyCode),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
     Insert,
     Normal,
-    Command
+    Command,
 }
 
 #[derive(Deserialize)]
@@ -94,7 +94,7 @@ pub struct Config {
 
 pub struct MemTableState {
     table_state: TableState,
-    address: u16
+    address: u16,
 }
 
 pub struct Debugger {
@@ -107,7 +107,7 @@ pub struct Debugger {
     command_buffer: String,
     display_textline: Option<String>,
     execution_thread: Option<JoinHandle<()>>,
-    running: Arc<RwLock<bool>>
+    running: Arc<RwLock<bool>>,
 }
 
 const DEFAULT_KEYBINDS: &str = r#"
@@ -141,7 +141,10 @@ impl Default for Debugger {
             current_window: WindowSelection::Output,
             config,
             mode: Mode::Normal,
-            memory_table_state: MemTableState { table_state: TableState::new(), address: 0 },
+            memory_table_state: MemTableState {
+                table_state: TableState::new(),
+                address: 0,
+            },
             output: Arc::default(),
             command_buffer: String::default(),
             display_textline: None,
@@ -161,11 +164,15 @@ impl Debugger {
         {
             let mut sim = new.sim.lock().unwrap();
 
-            sim.write(1u16<<15, 0xFE04); // Tell the os we are ready for another char.
+            sim.write(1u16 << 15, 0xFE04); // Tell the os we are ready for another char.
             sim.add_write_callback(0xFE06, move |sim, value| {
-                *(output_rc.lock().unwrap()) += String::from_utf8(vec![value as u8]).unwrap_or("".to_string()).as_str();
-                sim.write(1u16<<15, 0xFE04); // Tell the os we are ready for another char.            
+                *(output_rc.lock().unwrap()) += String::from_utf8(vec![value as u8])
+                    .unwrap_or("".to_string())
+                    .as_str();
+                sim.write(1u16 << 15, 0xFE04); // Tell the os we are ready for another char.            
             });
+
+            sim.set_reset_state();
         }
 
         new
@@ -195,89 +202,105 @@ impl Debugger {
     }
 
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> bool {
-        if !key_event.is_press() {return false;}
+        if !key_event.is_press() {
+            return false;
+        }
 
         let mut press: KeyPress = KeyPress::Code(key_event.code);
-        if let Some(action) = self.config.keybinds.dispatch(&key_event) && key_event.is_press() {
+
+        match self.mode {
+            Mode::Command => match press {
+                KeyPress::Code(code) => {
+                    if let Some(c) = code.as_char() {
+                        self.command_buffer += c.to_string().as_str();
+                    }
+                    if code.is_backspace() {
+                        self.command_buffer.pop();
+                    }
+                    self.display_textline = Some(format!(":{}", self.command_buffer));
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        if let Some(action) = self.config.keybinds.dispatch(&key_event)
+            && key_event.is_press()
+        {
             press = KeyPress::Action(*action);
         }
 
         match (press, self.mode) {
-            (press, Mode::Command) => {
-                match press
-                {
-                    KeyPress::Action(Action::Enter) => {
-                        let ret = self.handle_command(self.command_buffer.clone());
-                        self.command_buffer = "".to_string();
-                        self.display_textline = None;
-                        self.mode = Mode::Normal;
-                        return ret;
-                    },
-                    KeyPress::Code(code) => {
-                        if let Some(c) = code.as_char() {
-                            self.command_buffer += c.to_string().as_str();
-                        }
-                        if code.is_backspace() {
-                            self.command_buffer.pop();
-                        }
-                        self.display_textline = Some(format!(":{}", self.command_buffer));
-                    }
-                    _ => {}
+            (KeyPress::Action(Action::Enter), Mode::Command) => {
+                let ret = self.handle_command(self.command_buffer.clone());
+                self.command_buffer = "".to_string();
+                self.display_textline = None;
+                self.mode = Mode::Normal;
+                return ret;
+            }
+            (KeyPress::Action(action), mode) => match (action, mode) {
+                (Action::Quit, Mode::Insert) => {
+                    self.mode = Mode::Normal;
                 }
-                
-            },
-            (KeyPress::Action(action), mode) => {
-                match (action, mode) {
-                    (Action::Quit, Mode::Insert) => {self.mode = Mode::Normal;},
-                    (Action::Quit, Mode::Normal) => {return true;}
-                    (Action::Step, Mode::Normal) => { self.sim.lock().unwrap().step(); }
-                    (Action::Run, Mode::Normal) => { 
-                        let sim = self.sim.clone();
-                        let running = self.running.clone();
-                        *running.write().unwrap() = true;
-                        self.execution_thread = Some(std::thread::spawn(move || {
-                            while sim.lock().unwrap().step() && *running.read().unwrap() { }
-                            *running.write().unwrap() = false;
-                        }));
-                    }
-                    (Action::Stop, Mode::Normal) => {
-                        *self.running.write().unwrap() = false;
-                        if let Some(thread) = self.execution_thread.take() {
-                            if !thread.is_finished() {
-                                thread.join().unwrap();
-                            }
+                (Action::Quit, Mode::Normal) => {
+                    return true;
+                }
+                (Action::Step, Mode::Normal) => {
+                    let mut sim = self.sim.lock().unwrap();
+                    sim.step();
+                    self.memory_table_state.address = sim.get_program_counter()
+                }
+                (Action::Run, Mode::Normal) => {
+                    let sim = self.sim.clone();
+                    let running = self.running.clone();
+                    *running.write().unwrap() = true;
+                    self.execution_thread = Some(std::thread::spawn(move || {
+                        while sim.lock().unwrap().step() && *running.read().unwrap() {}
+                        *running.write().unwrap() = false;
+                    }));
+                }
+                (Action::Stop, Mode::Normal) => {
+                    *self.running.write().unwrap() = false;
+                    if let Some(thread) = self.execution_thread.take() {
+                        if !thread.is_finished() {
+                            thread.join().unwrap();
                         }
                     }
-                    (Action::Home, Mode::Normal) => {
-                        self.memory_table_state.address = self.sim.lock().unwrap().get_program_counter();
-                    }
-                    (Action::CommandMode, Mode::Normal) => {
-                        self.mode = Mode::Command;
-                        self.display_textline = Some(String::default());
-                        self.command_buffer = String::default();
-                        self.display_textline = Some(format!(":{}", self.command_buffer));
-                    }
-                    (Action::CycleWindow, Mode::Normal) => {
-                        self.current_window += 1;
-                    }
-                    (Action::ReverseCycleWindow, Mode::Normal) => {
-                        self.current_window -= 1;
-                    }
-                    (Action::Quit, Mode::Command) => {
-                        self.mode = Mode::Normal;
-                        self.command_buffer.clear();
-                        self.display_textline = None;
-                    }
+                }
+                (Action::Home, Mode::Normal) => {
+                    self.memory_table_state.address =
+                        self.sim.lock().unwrap().get_program_counter();
+                }
+                (Action::CommandMode, Mode::Normal) => {
+                    self.mode = Mode::Command;
+                    self.display_textline = Some(String::default());
+                    self.command_buffer = String::default();
+                    self.display_textline = Some(format!(":{}", self.command_buffer));
+                }
+                (Action::CycleWindow, Mode::Normal) => {
+                    self.current_window += 1;
+                }
+                (Action::ReverseCycleWindow, Mode::Normal) => {
+                    self.current_window -= 1;
+                }
+                (Action::Quit, Mode::Command) => {
+                    self.mode = Mode::Normal;
+                    self.command_buffer.clear();
+                    self.display_textline = None;
+                }
 
-                    (action, mode) => {
-                        match self.current_window {
-                            WindowSelection::Memory => self.handle_memory_input(KeyPress::Action(action), mode),
-                            WindowSelection::Output => self.handle_output_input(KeyPress::Action(action), mode),
-                            WindowSelection::State => self.handle_state_input(KeyPress::Action(action), mode),
-                        } 
+                (action, mode) => match self.current_window {
+                    WindowSelection::Memory => {
+                        self.handle_memory_input(KeyPress::Action(action), mode)
                     }
-                    _ => { }
-                }
+                    WindowSelection::Output => {
+                        self.handle_output_input(KeyPress::Action(action), mode)
+                    }
+                    WindowSelection::State => {
+                        self.handle_state_input(KeyPress::Action(action), mode)
+                    }
+                },
+                _ => {}
             },
             _ => {}
         }
@@ -335,18 +358,27 @@ impl Debugger {
         let rows = {
             let start_address: u16 = self.memory_table_state.address;
             let addresses = (0..num_visible_rows).map(move |x| {
-                ((start_address as i32 - num_visible_rows as i32 / 2) + x as i32).rem_euclid(0x10000)
+                ((start_address as i32 - num_visible_rows as i32 / 2) + x as i32)
+                    .rem_euclid(0x10000)
             });
             selected_index = addresses.clone().position(|x| {
                 let sim = self.sim.lock().unwrap();
                 x as u16 == sim.get_program_counter()
-            } );
+            });
             let values = addresses.map(|address| {
                 let sim = self.sim.lock().unwrap();
-                (address, sim.get_memory()[address as usize], sim.get_annotations()[address as usize].clone())
+                (
+                    address,
+                    sim.get_memory()[address as usize],
+                    sim.get_annotations()[address as usize].clone(),
+                )
             });
-            values.map(|v| { 
-                Row::new(vec![format!("0x{:04X}", v.0), format!("0x{:04X}", v.1), v.2.unwrap_or("".to_string())]) 
+            values.map(|v| {
+                Row::new(vec![
+                    format!("0x{:04X}", v.0),
+                    format!("0x{:04X}", v.1),
+                    v.2.unwrap_or("".to_string()),
+                ])
             })
         };
 
@@ -362,45 +394,68 @@ impl Debugger {
             self.current_window == WindowSelection::Memory,
         );
         frame.render_widget(&block, area);
-        frame.render_stateful_widget(mem_table, block.inner(area), &mut self.memory_table_state.table_state);
+        frame.render_stateful_widget(
+            mem_table,
+            block.inner(area),
+            &mut self.memory_table_state.table_state,
+        );
     }
 
     fn render_state(&self, frame: &mut Frame, area: Rect) {
+        let sim = self.sim.lock().unwrap();
         let block = self.draw_subwindow(
             "State".to_string(),
             self.current_window == WindowSelection::State,
         );
-        frame.render_widget(block, area);
+        let mut rows: Vec<(String, u16)> = Vec::new();
+
+        rows.push(("PC".to_string(), sim.get_program_counter()));
+        for reg in 0..8 {
+            rows.push((format!("R{}", reg), sim.get_register(reg)));
+        }
+
+        let rows = rows.iter().map(|(n, v)| {
+            Row::new(vec![
+                n.to_string(),
+                format!("0x{:04X}", v),
+                format!("#{}", v),
+            ])
+        });
+
+        let reg_table = Table::default()
+            .header(Row::new(vec!["Register", "Hex", "Decimal"]))
+            .rows(rows);
+        frame.render_widget(&block, area);
+        frame.render_widget(reg_table, block.inner(area));
     }
 
     fn handle_memory_input(&mut self, press: KeyPress, mode: Mode) {
         match (press, mode) {
             (KeyPress::Action(Action::Up), Mode::Normal) => {
                 self.memory_table_state.address = self.memory_table_state.address.wrapping_sub(1);
-            },
+            }
             (KeyPress::Action(Action::Down), Mode::Normal) => {
                 self.memory_table_state.address = self.memory_table_state.address.wrapping_add(1);
-            },
+            }
             (KeyPress::Action(Action::Top), Mode::Normal) => {
                 self.memory_table_state.address = 0;
-            },
+            }
             _ => {}
         }
     }
 
-    fn handle_output_input(&mut self, action: KeyPress, mode: Mode) {
-    }
+    fn handle_output_input(&mut self, action: KeyPress, mode: Mode) {}
 
-    fn handle_state_input(&mut self, action: KeyPress, mode: Mode) {
-    }
+    fn handle_state_input(&mut self, action: KeyPress, mode: Mode) {}
 
     fn render_display_textline(&self, frame: &mut Frame<'_>) {
-        if self.display_textline.is_none() { return; }
+        if self.display_textline.is_none() {
+            return;
+        }
         let text = self.display_textline.as_ref().unwrap();
         let area = frame.area();
         let disp_layout = Layout::vertical(vec![Constraint::Percentage(0), Constraint::Length(1)]);
-        let displine_widget = Line::raw(text)
-            .on_black();
+        let displine_widget = Line::raw(text).on_black();
         frame.render_widget(Clear, disp_layout.areas::<2>(area)[1]);
         frame.render_widget(displine_widget, disp_layout.areas::<2>(area)[1]);
     }
@@ -409,6 +464,12 @@ impl Debugger {
         match command.as_str() {
             "q" => {
                 return true;
+            }
+            "reset" => {
+                let mut sim = self.sim.lock().unwrap();
+                sim.reset();
+                *self.running.write().unwrap() = false;
+                self.memory_table_state.address = sim.get_program_counter();
             }
             _ => {}
         }
