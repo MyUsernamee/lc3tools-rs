@@ -1,6 +1,7 @@
 use std::ops::{AddAssign, SubAssign};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use crate::LC3Simulator;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -179,9 +180,20 @@ impl Debugger {
     }
 
     pub fn run(&mut self) -> std::io::Result<()> {
+        let tick_rate = Duration::from_millis(1000/60);
+
         ratatui::run(|t: &mut DefaultTerminal| {
+            let mut last_tick = Instant::now();
             loop {
                 t.draw(|f: &mut Frame| self.render_frame(f))?;
+
+                let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+
+                if !crossterm::event::poll(timeout)? {
+                    last_tick = Instant::now();
+                    continue;
+                }
+
                 let event = crossterm::event::read()?;
                 let should_exit = self.handle_event(event);
                 if should_exit {
