@@ -374,11 +374,17 @@ impl Debugger {
                 )
             });
             values.map(|v| {
-                Row::new(vec![
+                let mut row = Row::new(vec![
                     format!("0x{:04X}", v.0),
                     format!("0x{:04X}", v.1),
                     v.2.unwrap_or("".to_string()),
-                ])
+                ]);
+
+                if v.0 == self.memory_table_state.address as i32 {
+                    row = row.on_yellow().black();
+                }
+
+                row
             })
         };
 
