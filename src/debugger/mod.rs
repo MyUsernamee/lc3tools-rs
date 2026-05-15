@@ -388,7 +388,7 @@ impl Debugger {
             values.map(|v| {
                 let mut row = Row::new(vec![
                     format!("0x{:04X}", v.0),
-                    format!("0x{:04X}", v.1),
+                    format!("0x{:04X} ({})", v.1, v.1 as i16),
                     v.2.unwrap_or("".to_string()),
                 ]);
 
@@ -437,7 +437,7 @@ impl Debugger {
             Row::new(vec![
                 n.to_string(),
                 format!("0x{:04X}", v),
-                format!("#{}", v),
+                format!("#{}", *v as i16),
             ])
         });
 
