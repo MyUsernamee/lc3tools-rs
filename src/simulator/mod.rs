@@ -345,9 +345,9 @@ impl LC3Simulator {
     fn update_condition_code(&mut self, value: u16) {
         let signed = value as i16;
         self.state = match (signed == 0, signed < 0) {
-            (true, _) => (self.state.0, true, false),
-            (false, true) => (true, self.state.1, false),
-            (false, false) => (false, self.state.1, true),
+            (true, _) => (false, true, false),
+            (false, true) => (true, false, false),
+            (false, false) => (false, false, true),
         };
     }
 

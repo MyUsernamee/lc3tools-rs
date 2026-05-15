@@ -431,6 +431,7 @@ impl Debugger {
         for reg in 0..8 {
             rows.push((format!("R{}", reg), sim.get_register(reg)));
         }
+        rows.push(("PSR".to_string(), sim.get_psr()));
 
         let rows = rows.iter().map(|(n, v)| {
             Row::new(vec![
