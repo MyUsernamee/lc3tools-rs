@@ -254,10 +254,12 @@ impl LC3Simulator {
                 self.program_counter = self.registers[base_r as usize];
             }
             Instruction::JSR { op } => {
+                let temp = self.program_counter;
                 self.program_counter = match op {
                     Operand::Register(reg) => self.registers[reg as usize],
                     Operand::Immediate(offset) => sign_extend(11, offset),
-                }
+                };
+                self.registers[7] = temp;
             }
             i @ (Instruction::LD { dr, offset, .. }
             | Instruction::LDI { dr, offset, .. }
