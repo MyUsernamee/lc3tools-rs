@@ -110,6 +110,7 @@ impl LC3Simulator {
         let mut sim = LC3Simulator::new();
         sim.load_obj(include_bytes!("../../lc3os/os.obj").to_vec(), true)
             .expect("Failed to load OS.");
+        sim.registers[6] = 0xFDFF;
         sim
     }
 
